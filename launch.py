@@ -1,10 +1,11 @@
+# coding=gbk
 import argparse
 import contextlib
 import logging
 import os
 import sys
 import shutil
-
+os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
 
 class ColoredFilter(logging.Filter):
     """
@@ -184,6 +185,7 @@ def main(args, extras) -> None:
         if args.gradio:
             # also export assets if in gradio mode
             trainer.predict(system, datamodule=dm)
+            
     elif args.validate:
         # manually set epoch and global_step as they cannot be automatically resumed
         set_system_status(system, cfg.resume)

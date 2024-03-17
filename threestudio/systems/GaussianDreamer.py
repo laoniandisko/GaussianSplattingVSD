@@ -23,7 +23,7 @@ from shap_e.util.notebooks import decode_latent_mesh
 import io  
 from PIL import Image  
 import open3d as o3d
-
+import time
 
 def load_ply(path,save_path):
     C0 = 0.28209479177387814
@@ -74,6 +74,7 @@ def fetchPly(path):
 
 @threestudio.register("gaussiandreamer-system")
 class GaussianDreamer(BaseLift3DSystem):
+    
     @dataclass
     class Config(BaseLift3DSystem.Config):
         radius: float = 4
@@ -106,46 +107,53 @@ class GaussianDreamer(BaseLift3DSystem):
     
     def shape(self):
 
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        xm = load_model('transmitter', device=device)
-        model = load_model('text300M', device=device)
-        model.load_state_dict(torch.load('./load/shapE_finetuned_with_330kdata.pth', map_location=device)['model_state_dict'])
-        diffusion = diffusion_from_config_shape(load_config('diffusion'))
+        # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        # xm = load_model('transmitter', device=device)
+        # model = load_model('text300M', device=device)
+        # model.load_state_dict(torch.load('./load/shapE_finetuned_with_330kdata.pth', map_location=device)['model_state_dict'])
+        # diffusion = diffusion_from_config_shape(load_config('diffusion'))
 
-        batch_size = 1
-        guidance_scale = 15.0
-        prompt = str(self.cfg.prompt_processor.prompt)
-        print('prompt',prompt)
+        # batch_size = 1
+        # guidance_scale = 7.5
+        # prompt = str(self.cfg.prompt_processor.prompt)
+        # print('prompt',prompt)
 
-        latents = sample_latents(
-            batch_size=batch_size,
-            model=model,
-            diffusion=diffusion,
-            guidance_scale=guidance_scale,
-            model_kwargs=dict(texts=[prompt] * batch_size),
-            progress=True,
-            clip_denoised=True,
-            use_fp16=True,
-            use_karras=True,
-            karras_steps=64,
-            sigma_min=1e-3,
-            sigma_max=160,
-            s_churn=0,
-        )
-        render_mode = 'nerf' # you can change this to 'stf'
-        size = 256 # this is the size of the renders; higher values take longer to render.
+        # latents = sample_latents(
+        #     batch_size=batch_size,
+        #     model=model,
+        #     diffusion=diffusion,
+        #     guidance_scale=guidance_scale,
+        #     model_kwargs=dict(texts=[prompt] * batch_size),
+        #     progress=True,
+        #     clip_denoised=True,
+        #     use_fp16=True,
+        #     use_karras=True,
+        #     karras_steps=64,
+        #     sigma_min=1e-3,
+        #     sigma_max=160,
+        #     s_churn=0,
+        # )
+        # render_mode = 'stf' # you can change this to 'stf'
+        # size = 256 # this is the size of the renders; higher values take longer to render.
 
-        cameras = create_pan_cameras(size, device)
+        # cameras = create_pan_cameras(size, device)
 
-        self.shapeimages = decode_latent_images(xm, latents[0], cameras, rendering_mode=render_mode)
+        # self.shapeimages = decode_latent_images(xm, latents[0], cameras, rendering_mode=render_mode)
 
-        pc = decode_latent_mesh(xm, latents[0]).tri_mesh()
+        # pc = decode_latent_mesh(xm, latents[0]).tri_mesh()
 
 
+        
+        # coords = pc.verts
+        # rgb = np.concatenate([pc.vertex_channels['R'][:,None],pc.vertex_channels['G'][:,None],pc.vertex_channels['B'][:,None]],axis=1) 
+
+        with open("/mnt/chenjh/lx_projx/SyncDreamer/waibu/path.txt","r",encoding="utf-8") as f:
+            path = f.readlines()
+        coords = torch.load(path[0][:-1]).view(-1, 3).to('cpu').numpy()
+        rgb = torch.load(path[1][:-1]).view(-1, 3).to('cpu').detach().numpy()
+        
+        print("load point sucess")
         skip = 1
-        coords = pc.verts
-        rgb = np.concatenate([pc.vertex_channels['R'][:,None],pc.vertex_channels['G'][:,None],pc.vertex_channels['B'][:,None]],axis=1) 
-
         coords = coords[::skip]
         rgb = rgb[::skip]
 
@@ -165,7 +173,7 @@ class GaussianDreamer(BaseLift3DSystem):
         bbox = pcd_by3d.get_axis_aligned_bounding_box()
         np.random.seed(0)
 
-        num_points = 1000000  
+        num_points = 100000
         points = np.random.uniform(low=np.asarray(bbox.min_bound), high=np.asarray(bbox.max_bound), size=(num_points, 3))
 
 
@@ -177,7 +185,7 @@ class GaussianDreamer(BaseLift3DSystem):
         for point in points:
             _, idx, _ = kdtree.search_knn_vector_3d(point, 1)
             nearest_point = np.asarray(pcd_by3d.points)[idx[0]]
-            if np.linalg.norm(point - nearest_point) < 0.01:  # 这个阈值可能需要调整
+            if np.linalg.norm(point - nearest_point) < 0.03 : # 这个阈值可能需要调整
                 points_inside.append(point)
                 color_inside.append(rgb[idx[0]]+0.2*np.random.random(3))
 
@@ -218,6 +226,8 @@ class GaussianDreamer(BaseLift3DSystem):
         bound= self.radius*scale
 
         all_coords,all_rgb = self.add_points(coords,rgb)
+        # print("add point sucess")
+        # all_coords,all_rgb = coords,rgb
         
 
         pcd = BasicPointCloud(points=all_coords *bound, colors=all_rgb, normals=np.zeros((all_coords.shape[0], 3)))
@@ -226,41 +236,25 @@ class GaussianDreamer(BaseLift3DSystem):
     
     
     def forward(self, batch: Dict[str, Any],renderbackground = None) -> Dict[str, Any]:
-
         if renderbackground is None:
             renderbackground = self.background_tensor
         images = []
         depths = []
         self.viewspace_point_list = []
-        for id in range(batch['c2w_3dgs'].shape[0]):
-       
+        for id in range(batch['c2w_3dgs'].shape[0]):       
             viewpoint_cam  = Camera(c2w = batch['c2w_3dgs'][id],FoVy = batch['fovy'][id],height = batch['height'],width = batch['width'])
-
-
             render_pkg = render(viewpoint_cam, self.gaussian, self.pipe, renderbackground)
             image, viewspace_point_tensor, _, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
-            self.viewspace_point_list.append(viewspace_point_tensor)
-
-            
+            self.viewspace_point_list.append(viewspace_point_tensor)            
             if id == 0:
-
                 self.radii = radii
             else:
-
-
-                self.radii = torch.max(radii,self.radii)
-                
-            
+                self.radii = torch.max(radii,self.radii)         
             depth = render_pkg["depth_3dgs"]
-            depth =  depth.permute(1, 2, 0)
-            
+            depth =  depth.permute(1, 2, 0)         
             image =  image.permute(1, 2, 0)
             images.append(image)
             depths.append(depth)
-            
-
-
-
         images = torch.stack(images, 0)
         depths = torch.stack(depths, 0)
         self.visibility_filter = self.radii>0.0
@@ -281,6 +275,8 @@ class GaussianDreamer(BaseLift3DSystem):
     
     def training_step(self, batch, batch_idx):
 
+        
+
         self.gaussian.update_learning_rate(self.true_global_step)
         
         if self.true_global_step > 500:
@@ -294,17 +290,17 @@ class GaussianDreamer(BaseLift3DSystem):
         images = out["comp_rgb"]
 
 
-        guidance_eval = (self.true_global_step % 200 == 0)
-        # guidance_eval = False
-        
+        # guidance_eval = (self.true_global_step % 200 == 0)
+        guidance_eval = False
+        # currenttime = time.time()
         guidance_out = self.guidance(
             images, prompt_utils, **batch, rgb_as_latents=False,guidance_eval=guidance_eval
         )
-        
+        # print(time.time()-currenttime)
 
         loss = 0.0
 
-        loss = loss + guidance_out['loss_sds'] *self.C(self.cfg.loss['lambda_sds'])
+        loss = loss + guidance_out['loss_vsd'] *self.C(self.cfg.loss['lambda_sds']) + guidance_out['loss_lora'] *self.C(self.cfg.loss['lambda_sds'])
         
 
 
@@ -325,6 +321,43 @@ class GaussianDreamer(BaseLift3DSystem):
             )
         for name, value in self.cfg.loss.items():
             self.log(f"train_params/{name}", self.C(value))
+
+        # self.save_image_grid(
+        #     f"it{self.true_global_step}-{batch_idx}.png",
+        #     (
+        #         [
+        #             {
+        #                 "type": "rgb",
+        #                 "img": batch["rgb"][0],
+        #                 "kwargs": {"data_format": "HWC"},
+        #             }
+        #         ]
+        #         if "rgb" in batch
+        #         else []
+        #     )
+        #     + [
+        #         {
+        #             "type": "rgb",
+        #             "img": out["comp_rgb"][0],
+        #             "kwargs": {"data_format": "HWC"},
+        #         },
+        #     ]
+        #     + (
+        #         [
+        #             {
+        #                 "type": "rgb",
+        #                 "img": out["comp_normal"][0],
+        #                 "kwargs": {"data_format": "HWC", "data_range": (0, 1)},
+        #             }
+        #         ]
+        #         if "comp_normal" in out
+        #         else []
+        #     ),
+        #     name="validation_step",
+        #     step=self.true_global_step,
+        # )
+
+        
 
 
 
@@ -349,11 +382,6 @@ class GaussianDreamer(BaseLift3DSystem):
                 if self.true_global_step > 300 and self.true_global_step % 100 == 0: # 500 100
                     size_threshold = 20 if self.true_global_step > 500 else None # 3000
                     self.gaussian.densify_and_prune(0.0002 , 0.05, self.cameras_extent, size_threshold) 
-
-
-
-
-
 
     def validation_step(self, batch, batch_idx):
         out = self(batch)
@@ -494,7 +522,6 @@ class GaussianDreamer(BaseLift3DSystem):
                 step=self.true_global_step,
             )
 
-
     def on_test_epoch_end(self):
         self.save_img_sequence(
             f"it{self.true_global_step}-test",
@@ -508,12 +535,10 @@ class GaussianDreamer(BaseLift3DSystem):
         save_path = self.get_save_path(f"last_3dgs.ply")
         self.gaussian.save_ply(save_path)
         # self.pointefig.savefig(self.get_save_path("pointe.png"))
-        if self.load_type==0:
-            o3d.io.write_point_cloud(self.get_save_path("shape.ply"), self.point_cloud)
-            self.save_gif_to_file(self.shapeimages, self.get_save_path("shape.gif"))
-        load_ply(save_path,self.get_save_path(f"it{self.true_global_step}-test-color.ply"))
-        
-
+        # if self.load_type==0:
+        #     o3d.io.write_point_cloud(self.get_save_path("shape.ply"), self.point_cloud)
+        #     self.save_gif_to_file(self.shapeimages, self.get_save_path("shape.gif"))
+        # load_ply(save_path,self.get_save_path(f"it{self.true_global_step}-test-color.ply"))
 
     def configure_optimizers(self):
         self.parser = ArgumentParser(description="Training script parameters")
