@@ -87,11 +87,14 @@ class StableDiffusionVSDGuidance(BaseModule):
         class SubModules:
             pipe: StableDiffusionPipeline
             pipe_lora: StableDiffusionPipeline
+        print(self.cfg.pretrained_model_name_or_path)
 
         pipe = StableDiffusionPipeline.from_pretrained(
             self.cfg.pretrained_model_name_or_path,
             **pipe_kwargs,
         ).to(self.device)
+        print(self.cfg.pretrained_model_name_or_path)
+        print(self.cfg.pretrained_model_name_or_path_lora)
         if (
             self.cfg.pretrained_model_name_or_path
             == self.cfg.pretrained_model_name_or_path_lora
@@ -107,6 +110,7 @@ class StableDiffusionVSDGuidance(BaseModule):
             del pipe_lora.vae
             cleanup()
             pipe_lora.vae = pipe.vae
+        print(self.cfg.pretrained_model_name_or_path)
         self.submodules = SubModules(pipe=pipe, pipe_lora=pipe_lora)
 
         if self.cfg.enable_memory_efficient_attention:
@@ -611,7 +615,6 @@ class StableDiffusionVSDGuidance(BaseModule):
         **kwargs,
     ):
         batch_size = rgb.shape[0]
-
         rgb_BCHW = rgb.permute(0, 3, 1, 2)
         latents = self.get_latents(rgb_BCHW, rgb_as_latents=rgb_as_latents)
 

@@ -189,3 +189,11 @@ outputs-gradio/
 wandb/
 outputs/
 load/
+
+dependency_from_git
+envs
+gaussians_platting
+GaussianDreamer
+img_from_render_and_guiance
+models
+shap_e_model_cache

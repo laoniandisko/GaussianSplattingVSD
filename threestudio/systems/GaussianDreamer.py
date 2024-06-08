@@ -23,7 +23,12 @@ from shap_e.util.notebooks import decode_latent_mesh
 import io  
 from PIL import Image  
 import open3d as o3d
-import time
+
+from diffusers.utils import load_image
+from torchvision import  transforms
+loader = transforms.Compose([
+        transforms.ToTensor()])  
+
 
 def load_ply(path,save_path):
     C0 = 0.28209479177387814
@@ -72,9 +77,8 @@ def fetchPly(path):
     return BasicPointCloud(points=positions, colors=colors, normals=normals)
 
 
-@threestudio.register("gaussiandreamer-system")
+@threestudio.register("gaussiandreamer1-system")
 class GaussianDreamer(BaseLift3DSystem):
-    
     @dataclass
     class Config(BaseLift3DSystem.Config):
         radius: float = 4
@@ -94,7 +98,7 @@ class GaussianDreamer(BaseLift3DSystem):
         self.gaussian = GaussianModel(sh_degree = self.sh_degree)
         bg_color = [1, 1, 1] if False else [0, 0, 0]
         self.background_tensor = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
-
+        # self.sketch_photo = loader(load_image(f"/data1/web428/Co3DGS/sketch/3.png")).unsqueeze(0).to("cuda").permute(0, 2, 3, 1)
     
     def save_gif_to_file(self,images, output_file):  
         with io.BytesIO() as writer:  
@@ -107,53 +111,63 @@ class GaussianDreamer(BaseLift3DSystem):
     
     def shape(self):
 
-        # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        # xm = load_model('transmitter', device=device)
-        # model = load_model('text300M', device=device)
-        # model.load_state_dict(torch.load('./load/shapE_finetuned_with_330kdata.pth', map_location=device)['model_state_dict'])
-        # diffusion = diffusion_from_config_shape(load_config('diffusion'))
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        xm = load_model('transmitter', device=device)
+        batch_size = 1
+        guidance_scale = 15.0
+        if self.cfg.get("image_genaration_path",None):
+            model = load_model('image300M', device=device)
+            model.load_state_dict(torch.load('./load/image_cond.pt', map_location=device)['model_state_dict'])
+            image = load_image(self.cfg.image_genaration_path)
+            model_kwargs=dict(images=[image] * batch_size)
+        else:
+            model = load_model('text300M', device=device)
+            model.load_state_dict(torch.load('./load/shapE_finetuned_with_330kdata.pth', map_location=device)['model_state_dict'])
+            prompt = str(self.cfg.prompt_processor.prompt)
+            print('prompt',prompt)
+            model_kwargs=dict(texts=[prompt] * batch_size)
 
-        # batch_size = 1
-        # guidance_scale = 7.5
+
+        diffusion = diffusion_from_config_shape(load_config('diffusion'))
+
+        
+
         # prompt = str(self.cfg.prompt_processor.prompt)
         # print('prompt',prompt)
+        
 
-        # latents = sample_latents(
-        #     batch_size=batch_size,
-        #     model=model,
-        #     diffusion=diffusion,
-        #     guidance_scale=guidance_scale,
-        #     model_kwargs=dict(texts=[prompt] * batch_size),
-        #     progress=True,
-        #     clip_denoised=True,
-        #     use_fp16=True,
-        #     use_karras=True,
-        #     karras_steps=64,
-        #     sigma_min=1e-3,
-        #     sigma_max=160,
-        #     s_churn=0,
-        # )
-        # render_mode = 'stf' # you can change this to 'stf'
-        # size = 256 # this is the size of the renders; higher values take longer to render.
+        latents = sample_latents(
+            batch_size=batch_size,
+            model=model,
+            diffusion=diffusion,
+            guidance_scale=guidance_scale,
+            # model_kwargs=dict(texts=[prompt] * batch_size),
+            model_kwargs=model_kwargs,
+            progress=True,
+            clip_denoised=True,
+            use_fp16=True,
+            use_karras=True,
+            karras_steps=64,
+            sigma_min=1e-3,
+            sigma_max=160,
+            s_churn=0,
+        )
 
-        # cameras = create_pan_cameras(size, device)
+        
+        render_mode = 'nerf' # you can change this to 'stf'
+        size = 256 # this is the size of the renders; higher values take longer to render.
+
+        cameras = create_pan_cameras(size, device)
 
         # self.shapeimages = decode_latent_images(xm, latents[0], cameras, rendering_mode=render_mode)
+        # self.save_gif_to_file(self.shapeimages, self.get_save_path("shape.gif"))
+        pc = decode_latent_mesh(xm, latents[0]).tri_mesh()
 
-        # pc = decode_latent_mesh(xm, latents[0]).tri_mesh()
 
-
-        
-        # coords = pc.verts
-        # rgb = np.concatenate([pc.vertex_channels['R'][:,None],pc.vertex_channels['G'][:,None],pc.vertex_channels['B'][:,None]],axis=1) 
-
-        with open("/mnt/chenjh/lx_projx/SyncDreamer/waibu/path.txt","r",encoding="utf-8") as f:
-            path = f.readlines()
-        coords = torch.load(path[0][:-1]).view(-1, 3).to('cpu').numpy()
-        rgb = torch.load(path[1][:-1]).view(-1, 3).to('cpu').detach().numpy()
-        
-        print("load point sucess")
         skip = 1
+        coords = pc.verts
+        rgb = np.concatenate([pc.vertex_channels['R'][:,None],pc.vertex_channels['G'][:,None],pc.vertex_channels['B'][:,None]],axis=1) 
+
         coords = coords[::skip]
         rgb = rgb[::skip]
 
@@ -173,7 +187,7 @@ class GaussianDreamer(BaseLift3DSystem):
         bbox = pcd_by3d.get_axis_aligned_bounding_box()
         np.random.seed(0)
 
-        num_points = 100000
+        num_points = 10000000  
         points = np.random.uniform(low=np.asarray(bbox.min_bound), high=np.asarray(bbox.max_bound), size=(num_points, 3))
 
 
@@ -185,7 +199,7 @@ class GaussianDreamer(BaseLift3DSystem):
         for point in points:
             _, idx, _ = kdtree.search_knn_vector_3d(point, 1)
             nearest_point = np.asarray(pcd_by3d.points)[idx[0]]
-            if np.linalg.norm(point - nearest_point) < 0.03 : # 这个阈值可能需要调整
+            if np.linalg.norm(point - nearest_point) < 0.0003 :  
                 points_inside.append(point)
                 color_inside.append(rgb[idx[0]]+0.2*np.random.random(3))
 
@@ -226,8 +240,6 @@ class GaussianDreamer(BaseLift3DSystem):
         bound= self.radius*scale
 
         all_coords,all_rgb = self.add_points(coords,rgb)
-        # print("add point sucess")
-        # all_coords,all_rgb = coords,rgb
         
 
         pcd = BasicPointCloud(points=all_coords *bound, colors=all_rgb, normals=np.zeros((all_coords.shape[0], 3)))
@@ -236,25 +248,41 @@ class GaussianDreamer(BaseLift3DSystem):
     
     
     def forward(self, batch: Dict[str, Any],renderbackground = None) -> Dict[str, Any]:
+
         if renderbackground is None:
             renderbackground = self.background_tensor
         images = []
         depths = []
         self.viewspace_point_list = []
-        for id in range(batch['c2w_3dgs'].shape[0]):       
+        for id in range(batch['c2w_3dgs'].shape[0]):
+       
             viewpoint_cam  = Camera(c2w = batch['c2w_3dgs'][id],FoVy = batch['fovy'][id],height = batch['height'],width = batch['width'])
+
+
             render_pkg = render(viewpoint_cam, self.gaussian, self.pipe, renderbackground)
             image, viewspace_point_tensor, _, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
-            self.viewspace_point_list.append(viewspace_point_tensor)            
+            self.viewspace_point_list.append(viewspace_point_tensor)
+
+            
             if id == 0:
+
                 self.radii = radii
             else:
-                self.radii = torch.max(radii,self.radii)         
+
+
+                self.radii = torch.max(radii,self.radii)
+                
+            
             depth = render_pkg["depth_3dgs"]
-            depth =  depth.permute(1, 2, 0)         
+            depth =  depth.permute(1, 2, 0)
+            
             image =  image.permute(1, 2, 0)
             images.append(image)
             depths.append(depth)
+            
+
+
+
         images = torch.stack(images, 0)
         depths = torch.stack(depths, 0)
         self.visibility_filter = self.radii>0.0
@@ -275,8 +303,6 @@ class GaussianDreamer(BaseLift3DSystem):
     
     def training_step(self, batch, batch_idx):
 
-        
-
         self.gaussian.update_learning_rate(self.true_global_step)
         
         if self.true_global_step > 500:
@@ -285,23 +311,30 @@ class GaussianDreamer(BaseLift3DSystem):
         self.gaussian.update_learning_rate(self.true_global_step)
 
         out = self(batch) 
-
+        if self.true_global_step%self.cfg.val_render_step==0:
+            tensor2img(out,self.true_global_step)
         prompt_utils = self.prompt_processor()
         images = out["comp_rgb"]
 
+        # # guidance_eval = (self.true_global_step % 200 == 0)
+        # guidance_eval = False
+        
+        # guidance_out = self.guidance(
+        #     images, self.sketch_photo ,prompt_utils,
+        # )
 
         # guidance_eval = (self.true_global_step % 200 == 0)
         guidance_eval = False
-        # currenttime = time.time()
+        
         guidance_out = self.guidance(
             images, prompt_utils, **batch, rgb_as_latents=False,guidance_eval=guidance_eval
         )
-        # print(time.time()-currenttime)
+        
 
         loss = 0.0
 
-        loss = loss + guidance_out['loss_vsd'] *self.C(self.cfg.loss['lambda_sds']) + guidance_out['loss_lora'] *self.C(self.cfg.loss['lambda_sds'])
-        
+        loss = loss + guidance_out['loss_vsd'] *self.C(self.cfg.loss['lambda_vsd']) + guidance_out['loss_lora'] *self.C(self.cfg.loss['lambda_vsd'])
+        # print("loss_sds",guidance_out['loss_sds'])
 
 
 
@@ -321,43 +354,6 @@ class GaussianDreamer(BaseLift3DSystem):
             )
         for name, value in self.cfg.loss.items():
             self.log(f"train_params/{name}", self.C(value))
-
-        # self.save_image_grid(
-        #     f"it{self.true_global_step}-{batch_idx}.png",
-        #     (
-        #         [
-        #             {
-        #                 "type": "rgb",
-        #                 "img": batch["rgb"][0],
-        #                 "kwargs": {"data_format": "HWC"},
-        #             }
-        #         ]
-        #         if "rgb" in batch
-        #         else []
-        #     )
-        #     + [
-        #         {
-        #             "type": "rgb",
-        #             "img": out["comp_rgb"][0],
-        #             "kwargs": {"data_format": "HWC"},
-        #         },
-        #     ]
-        #     + (
-        #         [
-        #             {
-        #                 "type": "rgb",
-        #                 "img": out["comp_normal"][0],
-        #                 "kwargs": {"data_format": "HWC", "data_range": (0, 1)},
-        #             }
-        #         ]
-        #         if "comp_normal" in out
-        #         else []
-        #     ),
-        #     name="validation_step",
-        #     step=self.true_global_step,
-        # )
-
-        
 
 
 
@@ -382,6 +378,11 @@ class GaussianDreamer(BaseLift3DSystem):
                 if self.true_global_step > 300 and self.true_global_step % 100 == 0: # 500 100
                     size_threshold = 20 if self.true_global_step > 500 else None # 3000
                     self.gaussian.densify_and_prune(0.0002 , 0.05, self.cameras_extent, size_threshold) 
+
+
+
+
+
 
     def validation_step(self, batch, batch_idx):
         out = self(batch)
@@ -535,10 +536,11 @@ class GaussianDreamer(BaseLift3DSystem):
         save_path = self.get_save_path(f"last_3dgs.ply")
         self.gaussian.save_ply(save_path)
         # self.pointefig.savefig(self.get_save_path("pointe.png"))
-        # if self.load_type==0:
-        #     o3d.io.write_point_cloud(self.get_save_path("shape.ply"), self.point_cloud)
-        #     self.save_gif_to_file(self.shapeimages, self.get_save_path("shape.gif"))
-        # load_ply(save_path,self.get_save_path(f"it{self.true_global_step}-test-color.ply"))
+        if self.load_type==0:
+            o3d.io.write_point_cloud(self.get_save_path("shape.ply"), self.point_cloud)
+        load_ply(save_path,self.get_save_path(f"it{self.true_global_step}-test-color.ply"))
+        
+
 
     def configure_optimizers(self):
         self.parser = ArgumentParser(description="Training script parameters")
@@ -556,3 +558,71 @@ class GaussianDreamer(BaseLift3DSystem):
         }
 
         return ret
+
+
+
+
+def tensor2img(inp,step):
+    import time
+    from PIL import Image
+    if inp.get("render",None) is not None:
+        render = inp["render"]
+        render = render.permute(1, 2, 0).cpu()
+        render = (render * 255).byte()
+        image = Image.fromarray(render.numpy(), 'RGB')
+        image.save(f'img_from_render_and_guiance/{str(step)}-render-{str(time.time())}.png')
+        print('render saved successfully!')
+    if inp.get("depth_3dgs",None) is not None:
+        depth_3dgs = inp["depth_3dgs"]
+        depth_3dgs = depth_3dgs.squeeze(0).cpu()
+        depth_3dgs = (depth_3dgs * 255).byte()
+        image = Image.fromarray(depth_3dgs.numpy(), 'L')
+        image.save(f'img_from_render_and_guiance/{str(step)}-depth_3dgs-{str(time.time())}.png')
+        print('depth_3dgs saved successfully!')
+    if inp.get("comp_rgb",None) is not None:
+        for i in range(inp["comp_rgb"].shape[0]):
+            comp_rgb = inp["comp_rgb"][i]
+            comp_rgb = comp_rgb.cpu()
+            comp_rgb = (comp_rgb * 255).byte()
+            image = Image.fromarray(comp_rgb.numpy(), 'RGB')
+            image.save(f'img_from_render_and_guiance/{str(step)}-comp_rgb{str(i)}-{str(time.time())}.png')
+            print('comp_rgb saved successfully!')
+    if inp.get("depth",None) is not None:
+        for i in range(inp["depth"].shape[0]):
+            depth = inp["depth"][i]
+            depth = depth.squeeze(-1).cpu()
+            depth = (depth * 255).byte()
+            image = Image.fromarray(depth.numpy(), 'L')
+            image.save(f'img_from_render_and_guiance/{str(step)}-depth{str(i)}-{str(time.time())}.png')
+            print('depth saved successfully!')
+    if inp.get("opacity",None) is not None:
+        for i in range(inp["opacity"].shape[0]):
+            opacity = inp["opacity"][i]
+            opacity = opacity.squeeze(-1).cpu()
+            opacity = (opacity * 255).byte()
+            image = Image.fromarray(opacity.numpy(), 'L')
+            image.save(f'img_from_render_and_guiance/{str(step)}-opacity{str(i)}-{str(time.time())}.png')
+            print('opacity saved successfully!')
+    if inp.get("z_variance",None) is not None:
+        for i in range(inp["z_variance"].shape[0]):
+            z_variance = inp["z_variance"][i]
+            z_variance = z_variance.squeeze(-1).cpu()
+            z_variance = (z_variance * 255).byte()
+            image = Image.fromarray(z_variance.numpy(), 'L')
+            image.save(f'img_from_render_and_guiance/{str(step)}-z_variance{str(i)}-{str(time.time())}.png')
+            print('z_variance saved successfully!')
+    if inp.get("comp_rgb_bg",None) is not None:
+        comp_rgb_bg = inp["comp_rgb_bg"]
+        comp_rgb_bg = comp_rgb_bg.squeeze(0).cpu()
+        comp_rgb_bg = (comp_rgb_bg * 255).byte()
+        image = Image.fromarray(comp_rgb_bg.numpy(), 'RGB')
+        image.save(f'img_from_render_and_guiance/{str(step)}-comp_rgb_bg-{str(time.time())}.png')
+        print('comp_rgb_bg saved successfully!')
+    if inp.get("comp_rgb_fg",None) is not None:
+        comp_rgb_fg = inp["comp_rgb_fg"]
+        comp_rgb_fg = comp_rgb_fg.squeeze(0).cpu()
+        comp_rgb_fg = (comp_rgb_fg * 255).byte()
+        image = Image.fromarray(comp_rgb_fg.numpy(), 'RGB')
+        image.save(f'img_from_render_and_guiance/{str(step)}-comp_rgb_fg-{str(time.time())}.png')
+        print('comp_rgb_fg saved successfully!')
+    

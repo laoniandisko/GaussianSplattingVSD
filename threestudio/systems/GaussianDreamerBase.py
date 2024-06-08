@@ -77,7 +77,7 @@ def fetchPly(path):
     return BasicPointCloud(points=positions, colors=colors, normals=normals)
 
 
-@threestudio.register("gaussiandreamer1-system")
+@threestudio.register("gaussiandreamer-system")
 class GaussianDreamer(BaseLift3DSystem):
     @dataclass
     class Config(BaseLift3DSystem.Config):
@@ -123,7 +123,7 @@ class GaussianDreamer(BaseLift3DSystem):
         guidance_scale = 3.0
         # prompt = str(self.cfg.prompt_processor.prompt)
         # print('prompt',prompt)
-        image = load_image(f"/mnt/chenjh/lx_projx/GaussianDreamer/shap-e/lht/new_divide/{str(self.cfg.prompt_processor.prompt)}.png")
+        image = load_image(self.cfg.image_genaration)
 
         latents = sample_latents(
             batch_size=batch_size,

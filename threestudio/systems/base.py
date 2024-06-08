@@ -185,6 +185,7 @@ class BaseSystem(pl.LightningModule, Updateable, SaverMixin):
 class BaseLift3DSystem(BaseSystem):
     @dataclass
     class Config(BaseSystem.Config):
+        val_render_step: int = 20000
         geometry_type: str = ""
         geometry: dict = field(default_factory=dict)
         geometry_convert_from: Optional[str] = None
